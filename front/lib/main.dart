@@ -481,6 +481,16 @@ class _HomePageState extends State<_HomePage> with SingleTickerProviderStateMixi
   late AnimationController _ac;
   late Animation<double> _fade;
 
+  // Tracker toggle — зберігається в пам'яті (імітує localStorage).
+  // TODO: замінити на виклик Rust-бекенду через FFI / platform channel
+  bool _trackersBlocked = true;
+
+  // Wallet — hardcoded mock, два стани перемикаються кнопкою
+  bool _walletConnected = true;
+  static const String _walletAddress = '0x71C...3a9';
+  static const String _walletBalance = '1.284 ETH';
+  static const String _walletUsd    = '≈ \$4 321.00';
+
   final _shortcuts = const [
     _SC('IPFS',      'ipfs.io',           Icons.storage_rounded,       C.cyan),
     _SC('ENS',       'app.ens.domains',   Icons.language_rounded,      C.blue),
@@ -504,36 +514,58 @@ class _HomePageState extends State<_HomePage> with SingleTickerProviderStateMixi
   @override
   Widget build(BuildContext context) => FadeTransition(
     opacity: _fade,
-    child: Container(
-      color: C.bg,
-      child: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
-        child: Column(children: [
-          _HomeLogo(),
-          const SizedBox(height: 20),
-          _StatusPill(),
-          const SizedBox(height: 32),
-          _Section(
-            label: 'Быстрый доступ',
-            child: GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4, childAspectRatio: 0.88,
-                mainAxisSpacing: 10, crossAxisSpacing: 10,
+    child: Stack(
+      children: [
+        Container(
+          color: C.bg,
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
+            child: Column(children: [
+              _HomeLogo(),
+              const SizedBox(height: 20),
+              _StatusPill(),
+              const SizedBox(height: 32),
+              _Section(
+                label: 'Быстрый доступ',
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4, childAspectRatio: 0.88,
+                    mainAxisSpacing: 10, crossAxisSpacing: 10,
+                  ),
+                  itemCount: _shortcuts.length,
+                  itemBuilder: (_, i) => _SCTile(
+                    sc: _shortcuts[i],
+                    onTap: () => widget.onNavigate(_shortcuts[i].url),
+                  ),
+                ),
               ),
-              itemCount: _shortcuts.length,
-              itemBuilder: (_, i) => _SCTile(
-                sc: _shortcuts[i],
-                onTap: () => widget.onNavigate(_shortcuts[i].url),
+              const SizedBox(height: 20),
+              _Section(label: 'Сеть', child: _NetCard()),
+              const SizedBox(height: 16),
+              // ── Tracker toggle card
+              _TrackerToggleCard(
+                value: _trackersBlocked,
+                onChanged: (v) => setState(() => _trackersBlocked = v),
               ),
-            ),
+            ]),
           ),
-          const SizedBox(height: 20),
-          _Section(label: 'Сеть', child: _NetCard()),
-        ]),
-      ),
+        ),
+        // ── Wallet widget — bottom-right corner
+        Positioned(
+          right: 16, bottom: 16,
+          child: _WalletWidget(
+            connected: _walletConnected,
+            address: _walletAddress,
+            balance: _walletBalance,
+            usd: _walletUsd,
+            onConnect: () => setState(() => _walletConnected = true),
+            onDisconnect: () => setState(() => _walletConnected = false),
+          ),
+        ),
+      ],
     ),
   );
 }
@@ -795,6 +827,274 @@ class _MT extends StatelessWidget {
       ]),
     ),
   ));
+}
+
+// ── Tracker Toggle Card ───────────────────────────────────────────────────────
+// Стан зберігається в пам'яті (_HomePageState._trackersBlocked).
+// localStorage-семантика: значення живе протягом сесії і не скидається
+// при навігації між вкладками всередині додатку.
+// TODO: підключити до Rust-бекенду через platform channel / FFI.
+class _TrackerToggleCard extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  const _TrackerToggleCard({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) => AnimatedContainer(
+    duration: const Duration(milliseconds: 250),
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    decoration: BoxDecoration(
+      color: C.card,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: value ? C.green.withOpacity(0.35) : C.border,
+        width: value ? 1.5 : 1,
+      ),
+      boxShadow: value
+          ? [BoxShadow(color: C.green.withOpacity(0.06), blurRadius: 16, spreadRadius: 2)]
+          : [],
+    ),
+    child: Row(children: [
+      AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: value ? C.green.withOpacity(0.14) : C.border.withOpacity(0.3),
+        ),
+        child: Icon(
+          value ? Icons.shield_rounded : Icons.shield_outlined,
+          color: value ? C.green : C.t3, size: 18,
+        ),
+      ),
+      const SizedBox(width: 12),
+      Expanded(child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Блокування трекерів та реклами',
+            style: TextStyle(color: C.t1, fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: Text(
+              key: ValueKey(value),
+              value ? 'Увімкнено — захист активний' : 'Вимкнено — трекери не блокуються',
+              style: TextStyle(
+                color: value ? C.green : C.t3,
+                fontSize: 11,
+              ),
+            ),
+          ),
+        ],
+      )),
+      const SizedBox(width: 12),
+      GestureDetector(
+        onTap: () => onChanged(!value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          width: 46, height: 26,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+            color: value ? C.green : C.t3.withOpacity(0.3),
+            border: Border.all(
+              color: value ? C.green.withOpacity(0.5) : C.border,
+            ),
+          ),
+          child: Stack(children: [
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOut,
+              left: value ? 22 : 2, top: 2,
+              child: Container(
+                width: 20, height: 20,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 4),
+                  ],
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    ]),
+  );
+}
+
+// ── Wallet Widget ─────────────────────────────────────────────────────────────
+// Два стани: підключено / відключено.
+// Hardcoded змінні: _walletAddress, _walletBalance, _walletUsd.
+// TODO: замінити на реальний Web3-провайдер (WalletConnect / MetaMask).
+class _WalletWidget extends StatefulWidget {
+  final bool connected;
+  final String address, balance, usd;
+  final VoidCallback onConnect, onDisconnect;
+  const _WalletWidget({
+    required this.connected, required this.address, required this.balance,
+    required this.usd, required this.onConnect, required this.onDisconnect,
+  });
+  @override State<_WalletWidget> createState() => _WalletWidgetState();
+}
+
+class _WalletWidgetState extends State<_WalletWidget>
+    with SingleTickerProviderStateMixin {
+  bool _expanded = false;
+  late AnimationController _ac;
+  late Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ac = AnimationController(vsync: this, duration: const Duration(milliseconds: 200));
+    _scale = CurvedAnimation(parent: _ac, curve: Curves.easeOut);
+    _ac.forward();
+  }
+  @override void dispose() { _ac.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => ScaleTransition(
+    scale: _scale,
+    alignment: Alignment.bottomRight,
+    child: GestureDetector(
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+        width: _expanded ? 200 : 48,
+        height: _expanded && widget.connected ? 130 : (_expanded ? 96 : 48),
+        decoration: BoxDecoration(
+          color: C.card,
+          borderRadius: BorderRadius.circular(_expanded ? 16 : 24),
+          border: Border.all(
+            color: widget.connected
+                ? C.cyan.withOpacity(0.4)
+                : C.border,
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: widget.connected
+                  ? C.cyan.withOpacity(0.12)
+                  : Colors.black.withOpacity(0.3),
+              blurRadius: 16, spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(_expanded ? 16 : 24),
+          child: _expanded ? _expandedContent() : _collapsedIcon(),
+        ),
+      ),
+    ),
+  );
+
+  Widget _collapsedIcon() => Center(
+    child: Stack(alignment: Alignment.center, children: [
+      Icon(Icons.account_balance_wallet_outlined,
+        color: widget.connected ? C.cyan : C.t3, size: 22),
+      if (widget.connected)
+        Positioned(
+          right: 8, top: 8,
+          child: Container(
+            width: 7, height: 7,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle, color: C.green,
+              border: Border.all(color: C.card, width: 1.5),
+            ),
+          ),
+        ),
+    ]),
+  );
+
+  Widget _expandedContent() {
+    if (!widget.connected) {
+      return Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(children: [
+              const Icon(Icons.account_balance_wallet_outlined, color: C.t3, size: 16),
+              const SizedBox(width: 8),
+              const Text('Гаманець', style: TextStyle(
+                color: C.t2, fontSize: 12, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => setState(() => _expanded = false),
+                child: const Icon(Icons.close_rounded, color: C.t3, size: 14)),
+            ]),
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: widget.onConnect,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [C.blue, C.cyan]),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text('Підключити гаманець',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              width: 8, height: 8,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: C.green,
+                boxShadow: [BoxShadow(color: C.green.withOpacity(0.6), blurRadius: 4)]),
+            ),
+            const SizedBox(width: 6),
+            const Text('Підключено', style: TextStyle(
+              color: C.green, fontSize: 10, fontWeight: FontWeight.w600)),
+            const Spacer(),
+            GestureDetector(
+              onTap: () => setState(() => _expanded = false),
+              child: const Icon(Icons.close_rounded, color: C.t3, size: 14)),
+          ]),
+          const SizedBox(height: 8),
+          const Divider(color: C.borderFaint, height: 1),
+          const SizedBox(height: 8),
+          Text(widget.address, style: const TextStyle(
+            color: C.cyan, fontSize: 12, fontWeight: FontWeight.w600,
+            letterSpacing: 0.3, fontFamily: 'monospace')),
+          const SizedBox(height: 6),
+          Text(widget.balance, style: const TextStyle(
+            color: C.t1, fontSize: 16, fontWeight: FontWeight.w700)),
+          Text(widget.usd, style: const TextStyle(color: C.t3, fontSize: 10)),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: widget.onDisconnect,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 7),
+              decoration: BoxDecoration(
+                color: C.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: C.red.withOpacity(0.3)),
+              ),
+              child: const Text('Відключити',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: C.red, fontSize: 10, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ── Models ────────────────────────────────────────────────────────────────────
