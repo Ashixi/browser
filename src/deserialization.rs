@@ -18,7 +18,7 @@ pub fn decode_and_reassemble(
     let mut shards_for_reconstruction: Vec<Option<Vec<u8>>> = vec![None; total_shards];
 
     // 3. Валідація цілісності кожної частини через хеш-суму
-    for chunk in received_chunks.into_ite {
+    for chunk in received_chunks.into_iter() {
         if chunk.chunk_index >= total_shards {
             continue; // Ігноруємо шматки з некоректним індексом
         }
