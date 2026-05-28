@@ -1,0 +1,26 @@
+name: Consensia AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Consensia AI Review
+        uses: consensia-world/github-actions@v1
+        with:
+          scenario: "Scenario A"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONSENSIA_API_KEY: ${{ secrets.CONSENSIA_API_KEY }}
