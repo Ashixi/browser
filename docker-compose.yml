@@ -40,3 +40,12 @@ services:
     environment:
       - RUST_BACKTRACE=1
     command: cargo run --bin p2p_node
+    mock-node:
+      build: ./mock-node
+      ports:
+        - "3000:3000"
+      volumes:
+        - ./mock-node:/app
+        - /app/node_modules
+      environment:
+        - PORT=3000
