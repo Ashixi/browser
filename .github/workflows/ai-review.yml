@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Consensia AI Review
-        uses: consensia-world/github-actions@v1
+        uses: consensia/github-actions@v1
         with:
           scenario: "Scenario A"
         env:
