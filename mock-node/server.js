@@ -82,6 +82,41 @@ app.get('/storage/chunk/:id', (req, res) => {
     }
 });
 
+const FEEDO_NODE_URL = process.env.FEEDO_NODE_URL || 'http://localhost:4000'; 
+
+app.get('/page/:hash_id', async (req, res) => {
+    const { hash_id } = req.params;
+
+    if (!hash_id) {
+        return res.status(400).json({ error: 'Missing hash_id parameter' });
+    }
+
+    try {
+        console.log(`[Proxy] Requesting content for hash: ${hash_id} from Feedo node...`);
+        
+        const feedoResponse = await fetch(`${FEEDO_NODE_URL}/content/${hash_id}`);
+        
+        if (!feedoResponse.ok) {
+            console.error(`[Proxy] Feedo node responded with status: ${feedoResponse.status}`);
+            return res.status(feedoResponse.status).json({ 
+                error: `Failed to fetch content from Feedo node: ${feedoResponse.statusText}` 
+            });
+        }
+
+        const arrayBuffer = await feedoResponse.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        const contentType = feedoResponse.headers.get('content-type') || 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+
+        res.send(buffer);
+
+    } catch (error) {
+        console.error('[Proxy] Error connecting to Feedo node:', error);
+        res.status(500).json({ error: 'Internal server error or Feedo node is unreachable' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Mock storage node is running on http://localhost:${PORT}`);
     console.log(`Chunks will be stored in: ${STORAGE_DIR}`);
