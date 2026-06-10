@@ -121,3 +121,99 @@ app.listen(PORT, () => {
     console.log(`Mock storage node is running on http://localhost:${PORT}`);
     console.log(`Chunks will be stored in: ${STORAGE_DIR}`);
 });
+
+const crypto = require('crypto');
+
+// Конфігурація адреси ноди для публікації контенту
+const PUBLISH_NODE_URL = process.env.PUBLISH_NODE_URL || 'http://localhost:4000';
+
+// Ініціалізація локальних ключів користувача (імітація гаманця/ідентифікатора)
+// Для реальних P2P систем часто використовують Ed25519 (швидкий та безпечний)
+let privateKey, publicKey;
+
+function initKeyPair() {
+    // Генеруємо пару ключів, якщо вони потрібні для сесії
+    // У реальному браузері вони б завантажувалися з захищеного сховища
+    const pair = crypto.generateKeyPairSync('ed25519', {
+        privateKeyEncoding: { format: 'pem', type: 'pkcs8' },
+        publicKeyEncoding: { format: 'pem', type: 'spki' }
+    });
+    privateKey = pair.privateKey;
+    publicKey = pair.publicKey;
+    console.log('[Crypto] Local KeyPair initialized successfully.');
+}
+initKeyPair();
+
+// POST /content/publish
+// Приймає контент від фронтенду, формує корисне навантаження, підписує його та відправляє на ноду
+app.post('/content/publish', async (req, res) => {
+    let data;
+
+    // Якщо дані прийшли як JSON-рядок через raw-парсер
+    if (req.body && Buffer.isBuffer(req.body)) {
+        try {
+            const parsedBody = JSON.parse(req.body.toString());
+            data = parsedBody.data;
+        } catch (e) {
+            // Якщо це не JSON, а звичайний текст
+            data = req.body.toString();
+        }
+    } else {
+        data = req.body?.data;
+    }
+
+    if (!data) {
+        return res.status(400).json({ error: 'No data provided for publication' });
+    }
+
+    try {
+        // 1. Формуємо корисне навантаження (Payload)
+        const payload = {
+            content: data,
+            timestamp: Date.now(),
+            author: publicKey.replace(/[\n\r]/g, '')
+        };
+
+        const payloadString = JSON.stringify(payload);
+
+        // 2. Підписуємо навантаження локальним приватним ключем
+        const signature = crypto.sign(null, Buffer.from(payloadString), privateKey);
+        
+        // 3. Формуємо фінальний пакет
+        const signedPacket = {
+            payload: payload,
+            signature: signature.toString('hex')
+        };
+
+        console.log('[Crypto] Payload signed successfully. Sending to decentralized node...');
+
+        // 4. Відправляємо підписаний пакет на децентралізовану ноду
+        const nodeResponse = await fetch(`${PUBLISH_NODE_URL}/content/publish`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(signedPacket)
+        });
+
+        if (!nodeResponse.ok) {
+            console.error(`[Node Error] Main node responded with status: ${nodeResponse.status}`);
+            return res.status(nodeResponse.status).json({
+                error: `Node failed to publish content: ${nodeResponse.statusText}`
+            });
+        }
+
+        const nodeResult = await nodeResponse.json();
+
+        res.status(200).json({
+            message: 'Content signed and published successfully',
+            author: payload.author,
+            signature: signedPacket.signature,
+            nodeResponse: nodeResult
+        });
+
+    } catch (error) {
+        console.error('[Publish Error] Error processing content publication:', error);
+        res.status(500).json({ error: 'Internal server error or destination node is unreachable' });
+    }
+});
