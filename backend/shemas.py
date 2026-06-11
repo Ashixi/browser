@@ -27,3 +27,8 @@ class SemanticQueryRequest(BaseModel):
     query: str
     top_k: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
+
+class ContentPublishRequest(BaseModel):
+    payload: Dict[str, Any]
+    signature: str
+    public_key: Optional[str] = None
