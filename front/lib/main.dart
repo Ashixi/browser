@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
+import 'sidebar_panel.dart';
 
 void main() {
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
@@ -66,6 +67,7 @@ class _BrowserShellState extends State<BrowserShell> {
   bool _isSecure   = true;
   bool _isLoading  = false;
   double _loadProgress = 0;
+  bool _sidebarOpen = false;
 
   final Map<int, List<String>> _history      = {};
   final Map<int, int>          _historyIndex = {};
@@ -250,6 +252,8 @@ class _BrowserShellState extends State<BrowserShell> {
           onBack: _goBack, onFwd: _goForward, onReload: _reload,
           onNavigate: _navigate, onMenu: _openMenu,
           hint: _current.url.isEmpty ? '' : _displayUrl(_current.url),
+          sidebarOpen: _sidebarOpen,
+          onSidebarToggle: () => setState(() => _sidebarOpen = !_sidebarOpen),
         ),
         // ── Progress
         AnimatedContainer(
@@ -261,10 +265,36 @@ class _BrowserShellState extends State<BrowserShell> {
             valueColor: const AlwaysStoppedAnimation(C.blue),
           ),
         ),
-        // ── Page
-        Expanded(child: _current.isHome
-            ? _HomePage(onNavigate: _navigate)
-            : _WebPage(url: _current.url, isLoading: _isLoading)),
+        // ── Page + Sidebar
+        Expanded(
+          child: Row(children: [
+            // ── Sidebar panel
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeInOutCubic,
+              width: _sidebarOpen ? 300 : 0,
+              child: ClipRect(
+                child: OverflowBox(
+                  alignment: Alignment.topLeft,
+                  maxWidth: 300,
+                  child: SizedBox(
+                    width: 300,
+                    child: SidebarPanel(onNavigate: _navigate),
+                  ),
+                ),
+              ),
+            ),
+            // ── Вертикальний розділювач
+            if (_sidebarOpen)
+              const VerticalDivider(width: 1, color: C.border),
+            // ── Основний контент
+            Expanded(
+              child: _current.isHome
+                  ? _HomePage(onNavigate: _navigate)
+                  : _WebPage(url: _current.url, isLoading: _isLoading),
+            ),
+          ]),
+        ),
       ]),
     );
   }
@@ -372,7 +402,8 @@ class _NavBar extends StatelessWidget {
   final TextEditingController urlCtrl;
   final FocusNode urlFocus;
   final bool editing, isSecure, isLoading, canBack, canFwd;
-  final VoidCallback onBack, onFwd, onReload, onMenu;
+  final bool sidebarOpen;
+  final VoidCallback onBack, onFwd, onReload, onMenu, onSidebarToggle;
   final ValueChanged<String> onNavigate;
   final String hint;
 
@@ -382,6 +413,7 @@ class _NavBar extends StatelessWidget {
     required this.canFwd, required this.onBack, required this.onFwd,
     required this.onReload, required this.onNavigate, required this.onMenu,
     required this.hint,
+    required this.sidebarOpen, required this.onSidebarToggle,
   });
 
   @override
@@ -390,6 +422,28 @@ class _NavBar extends StatelessWidget {
     color: C.surface,
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
     child: Row(children: [
+      // ── Кнопка toggle сайдбара
+      AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: 34, height: 36,
+        decoration: BoxDecoration(
+          color: sidebarOpen ? C.blue.withOpacity(0.15) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: sidebarOpen
+              ? Border.all(color: C.blue.withOpacity(0.4))
+              : null,
+        ),
+        child: InkWell(
+          onTap: onSidebarToggle,
+          borderRadius: BorderRadius.circular(8),
+          child: Icon(
+            sidebarOpen ? Icons.view_sidebar_rounded : Icons.view_sidebar_rounded,
+            size: 16,
+            color: sidebarOpen ? C.blue : C.t2,
+          ),
+        ),
+      ),
+      const SizedBox(width: 4),
       _NBtn(Icons.arrow_back_ios_new_rounded, canBack, onBack),
       const SizedBox(width: 2),
       _NBtn(Icons.arrow_forward_ios_rounded,  canFwd,  onFwd),
