@@ -1,8 +1,11 @@
-from fastapi import FastAPI, Header, HTTPException, Depends, status
-from typing import Optional, List
+import os
 import re
+from typing import Optional, List, Dict, Any
 
-from backend.shemas import UserProfile, ConnectedDApp, PrivacySettings
+import httpx
+from fastapi import FastAPI, Header, HTTPException, Depends, status
+
+from backend.shemas import UserProfile, ConnectedDApp, PrivacySettings, BookmarkItem, SemanticQueryRequest
 
 app = FastAPI(
     title="User Profile Management API",
@@ -25,6 +28,8 @@ mock_profile = UserProfile(
         )
     ],
 )
+
+FEEDO_NODE_BASE_URL = os.getenv("FEEDO_NODE_BASE_URL", "http://localhost:9000")
 
 
 def extract_session_key(
@@ -62,6 +67,85 @@ def authorize_user(session_key: str = Depends(extract_session_key)) -> UserProfi
             detail="Mock session not recognized for the current profile.",
         )
     return mock_profile
+
+
+def parse_crdt_bookmarks(state: Any) -> List[Dict[str, Any]]:
+    if isinstance(state, list):
+        return state
+
+    if isinstance(state, dict):
+        for candidate in ("value", "state", "items", "bookmarks", "entries", "data"):
+            if candidate in state and isinstance(state[candidate], list):
+                return state[candidate]
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Unexpected CRDT state format from Feedo node.",
+    )
+
+
+async def fetch_remote_bookmarks(object_id: str) -> List[Dict[str, Any]]:
+    url = f"{FEEDO_NODE_BASE_URL}/crdt/{object_id}"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(url)
+
+    if response.status_code == 404:
+        return []
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read CRDT state from Feedo node: {response.status_code}",
+        )
+
+    try:
+        payload = response.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid JSON returned from Feedo node.",
+        )
+
+    return parse_crdt_bookmarks(payload)
+
+
+async def post_crdt_mutations(object_id: str, mutations: List[Dict[str, Any]]) -> None:
+    url = f"{FEEDO_NODE_BASE_URL}/crdt/mutate"
+    payload = {"object_id": object_id, "mutations": mutations}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(url, json=payload)
+
+    if response.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to mutate CRDT state on Feedo node: {response.status_code}",
+        )
+
+
+@app.post("/semantic/query", response_model=Dict[str, Any])
+async def proxy_semantic_query(
+    query: SemanticQueryRequest,
+    profile: UserProfile = Depends(authorize_user),
+) -> Dict[str, Any]:
+    url = f"{FEEDO_NODE_BASE_URL}/semantic/query"
+    payload = query.dict(exclude_none=True)
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(url, json=payload)
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Feedo semantic query failed: {response.status_code}",
+        )
+
+    try:
+        return response.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid JSON returned from Feedo semantic query.",
+        )
 
 
 @app.get("/health")
@@ -121,3 +205,50 @@ def remove_connected_dapp(
 ) -> None:
     profile.dapps = [item for item in profile.dapps if item.dapp_id != dapp_id]
     return None
+
+
+def merge_bookmarks(local_bookmarks: List[Dict[str, Any]], remote_bookmarks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+
+    for item in remote_bookmarks:
+        bookmark_id = item.get("id")
+        if bookmark_id:
+            merged[bookmark_id] = item
+
+    for item in local_bookmarks:
+        bookmark_id = item.get("id")
+        if not bookmark_id:
+            continue
+        if bookmark_id not in merged:
+            merged[bookmark_id] = item
+
+    return list(merged.values())
+
+
+@app.post("/bookmarks/sync", response_model=List[BookmarkItem])
+async def sync_bookmarks(
+    bookmarks: List[BookmarkItem],
+    profile: UserProfile = Depends(authorize_user),
+) -> List[BookmarkItem]:
+    object_id = f"bookmarks:{profile.public_key}"
+    remote_bookmarks = await fetch_remote_bookmarks(object_id)
+    local_bookmarks = [bookmark.dict(exclude_none=True) for bookmark in bookmarks]
+
+    remote_ids = {bookmark["id"] for bookmark in remote_bookmarks if "id" in bookmark}
+    mutations: List[Dict[str, Any]] = []
+
+    for bookmark in local_bookmarks:
+        if bookmark["id"] not in remote_ids:
+            mutations.append(
+                {
+                    "type": "upsert",
+                    "key": bookmark["id"],
+                    "value": bookmark,
+                }
+            )
+
+    if mutations:
+        await post_crdt_mutations(object_id, mutations)
+
+    merged_bookmarks = merge_bookmarks(local_bookmarks, remote_bookmarks)
+    return [BookmarkItem(**bookmark) for bookmark in merged_bookmarks]
