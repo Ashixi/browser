@@ -3,9 +3,9 @@ import re
 from typing import Optional, List, Dict, Any
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Depends, status
+from fastapi import FastAPI, Header, HTTPException, Depends, status, Response
 
-from backend.shemas import UserProfile, ConnectedDApp, PrivacySettings, BookmarkItem, SemanticQueryRequest
+from backend.shemas import UserProfile, ConnectedDApp, PrivacySettings, BookmarkItem, SemanticQueryRequest, ContentPublishRequest
 
 app = FastAPI(
     title="User Profile Management API",
@@ -252,3 +252,58 @@ async def sync_bookmarks(
 
     merged_bookmarks = merge_bookmarks(local_bookmarks, remote_bookmarks)
     return [BookmarkItem(**bookmark) for bookmark in merged_bookmarks]
+
+
+@app.post("/content/publish", response_model=Dict[str, Any])
+async def publish_content(
+    request: ContentPublishRequest,
+    profile: UserProfile = Depends(authorize_user),
+) -> Dict[str, Any]:
+    url = f"{FEEDO_NODE_BASE_URL}/content/publish"
+    payload = request.dict(exclude_none=True)
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(url, json=payload)
+
+    if response.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to publish content to Feedo node: {response.status_code}",
+        )
+
+    try:
+        return response.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid JSON returned from Feedo node publish.",
+        )
+
+
+@app.get("/content/{hash_id}")
+async def get_content(
+    hash_id: str,
+    profile: UserProfile = Depends(authorize_user),
+) -> Response:
+    url = f"{FEEDO_NODE_BASE_URL}/content/{hash_id}"
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url)
+
+    if response.status_code == 404:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Content not found on Feedo node."
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to fetch content from Feedo node: {response.status_code}",
+        )
+
+    return Response(
+        content=response.content,
+        status_code=response.status_code,
+        media_type=response.headers.get("content-type", "application/json")
+    )
