@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:markdown/markdown.dart' as md;
 
 void main() {
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
@@ -724,34 +726,194 @@ class _NRow extends StatelessWidget {
   ]);
 }
 
-// ── Web Page placeholder ──────────────────────────────────────────────────────
-class _WebPage extends StatelessWidget {
+// ── Web Page — Markdown viewer ────────────────────────────────────────────────
+// Отримує сирий текст/Markdown з децентралізованої мережі та рендерить його.
+// _mockFetch імітує мережевий запит; замінити на реальний IPFS/DWeb-клієнт.
+class _WebPage extends StatefulWidget {
   final String url;
   final bool isLoading;
   const _WebPage({required this.url, required this.isLoading});
-  @override Widget build(BuildContext context) {
-    if (isLoading) return const Center(
-      child: CircularProgressIndicator(color: C.blue, strokeWidth: 2));
-    return Center(child: Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 56, height: 56,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle, color: C.card, border: Border.all(color: C.border)),
-          child: const Icon(Icons.language_rounded, color: C.t3, size: 24)),
-        const SizedBox(height: 18),
-        Text(url, style: const TextStyle(color: C.t2, fontSize: 12),
-          textAlign: TextAlign.center, overflow: TextOverflow.ellipsis, maxLines: 2),
-        const SizedBox(height: 8),
-        const Text(
-          'WebView доступен только в нативном приложении.\nВ Flutter Web страница отображается здесь.',
-          style: TextStyle(color: C.t3, fontSize: 11, height: 1.7),
-          textAlign: TextAlign.center,
-        ),
-      ]),
-    ));
+  @override State<_WebPage> createState() => _WebPageState();
+}
+
+class _WebPageState extends State<_WebPage> {
+  String? _content;
+  bool _fetching = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchContent();
   }
+
+  @override
+  void didUpdateWidget(_WebPage old) {
+    super.didUpdateWidget(old);
+    if (old.url != widget.url) _fetchContent();
+  }
+
+  Future<void> _fetchContent() async {
+    if (widget.url.isEmpty) return;
+    setState(() { _fetching = true; _content = null; });
+    // TODO: замінити на реальний виклик IPFS/DWeb/P2P-клієнта.
+    // Очікується що мережа повертає сирий Markdown-рядок.
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+    setState(() {
+      _fetching = false;
+      _content = _mockMarkdown(widget.url);
+    });
+  }
+
+  /// Тимчасова заглушка — повертає демо-Markdown для будь-якого URL.
+  /// Замінити на `await ipfsClient.fetchString(url)` або аналог.
+  String _mockMarkdown(String url) => '''
+# Вміст із децентралізованої мережі
+
+> Сторінка завантажена з: `$url`
+
+Цей браузер отримує **сирий Markdown** із P2P-мережі та рендерить його
+безпосередньо — без центрального сервера.
+
+## Можливості
+
+- Підтримка **жирного** та _курсиву_
+- Вбудовані `code snippets`
+- Списки та вкладені елементи
+- Посилання та цитати
+
+## Приклад коду
+
+```dart
+final content = await ipfs.cat(cid);
+setState(() => _content = content);
+```
+
+## Посилання
+
+[IPFS Docs](https://docs.ipfs.tech) · [ENS](https://ens.domains) · [DWeb](https://dweb.link)
+
+---
+
+*Завантажено через Nexus Browser — приватно, без цензури.*
+''';
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.isLoading || _fetching) {
+      return const Center(
+        child: CircularProgressIndicator(color: C.blue, strokeWidth: 2));
+    }
+    if (_content == null || _content!.isEmpty) {
+      return const Center(
+        child: Text('Немає вмісту', style: TextStyle(color: C.t3, fontSize: 13)));
+    }
+    return _MarkdownView(content: _content!);
+  }
+}
+
+// ── Markdown View ─────────────────────────────────────────────────────────────
+class _MarkdownView extends StatelessWidget {
+  final String content;
+  const _MarkdownView({required this.content});
+
+  @override
+  Widget build(BuildContext context) {
+    return Markdown(
+      data: content,
+      selectable: true,
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      extensionSet: md.ExtensionSet(
+        md.ExtensionSet.gitHubFlavored.blockSyntaxes,
+        [md.EmojiSyntax(), ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes],
+      ),
+      styleSheet: _mdStyleSheet(),
+      onTapLink: (text, href, title) {
+        // TODO: передати href у _navigate() через callback
+        debugPrint('Tap link: $href');
+      },
+    );
+  }
+
+  /// Кастомні стилі Markdown під темну палітру C.*
+  MarkdownStyleSheet _mdStyleSheet() => MarkdownStyleSheet(
+    // ── Фон
+    blockquoteDecoration: BoxDecoration(
+      color: C.card,
+      borderRadius: BorderRadius.circular(4),
+      border: const Border(left: BorderSide(color: C.cyan, width: 3)),
+    ),
+    codeblockDecoration: BoxDecoration(
+      color: C.card,
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: C.border),
+    ),
+
+    // ── Заголовки
+    h1: const TextStyle(
+      color: C.t1, fontSize: 26, fontWeight: FontWeight.w700,
+      letterSpacing: -0.5, height: 1.3),
+    h2: const TextStyle(
+      color: C.t1, fontSize: 21, fontWeight: FontWeight.w600,
+      letterSpacing: -0.3, height: 1.35),
+    h3: const TextStyle(
+      color: C.t1, fontSize: 17, fontWeight: FontWeight.w600, height: 1.4),
+    h4: const TextStyle(
+      color: C.t2, fontSize: 15, fontWeight: FontWeight.w600),
+    h5: const TextStyle(
+      color: C.t2, fontSize: 13, fontWeight: FontWeight.w600),
+    h6: const TextStyle(
+      color: C.t3, fontSize: 12, fontWeight: FontWeight.w600),
+
+    // ── Відступи заголовків
+    h1Padding: const EdgeInsets.only(top: 24, bottom: 8),
+    h2Padding: const EdgeInsets.only(top: 20, bottom: 6),
+    h3Padding: const EdgeInsets.only(top: 16, bottom: 4),
+
+    // ── Основний текст
+    p: const TextStyle(color: C.t2, fontSize: 14, height: 1.75),
+    pPadding: const EdgeInsets.only(bottom: 10),
+
+    // ── Жирний / курсив
+    strong: const TextStyle(color: C.t1, fontWeight: FontWeight.w600),
+    em: TextStyle(color: C.t2.withOpacity(0.9), fontStyle: FontStyle.italic),
+
+    // ── Інлайн-код
+    code: const TextStyle(
+      color: C.cyan, fontSize: 12.5,
+      fontFamily: 'monospace', backgroundColor: Color(0xFF1A2540)),
+
+    // ── Блок коду
+    codeblockPadding: const EdgeInsets.all(16),
+    codeblockAlign: WrapAlignment.start,
+
+    // ── Цитата
+    blockquote: const TextStyle(color: C.t2, fontSize: 14, height: 1.6),
+    blockquotePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+
+    // ── Списки
+    listBullet: const TextStyle(color: C.cyan, fontSize: 14),
+    listBulletPadding: const EdgeInsets.only(right: 8),
+    listIndent: 20,
+
+    // ── Посилання
+    a: const TextStyle(
+      color: C.blue, decoration: TextDecoration.underline,
+      decorationColor: C.blue),
+
+    // ── Горизонтальна лінія
+    horizontalRuleDecoration: const BoxDecoration(
+      border: Border(bottom: BorderSide(color: C.border, width: 1))),
+
+    // ── Таблиця
+    tableHead: const TextStyle(color: C.t1, fontWeight: FontWeight.w600, fontSize: 13),
+    tableBody: const TextStyle(color: C.t2, fontSize: 13),
+    tableBorder: TableBorder.all(color: C.border, width: 1),
+    tableHeadAlign: TextAlign.left,
+    tableColumnWidth: const FlexColumnWidth(),
+    tableCellsPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+  );
 }
 
 // ── Menu Bottom Sheet ─────────────────────────────────────────────────────────
